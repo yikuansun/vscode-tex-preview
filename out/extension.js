@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 const vscode = require("vscode");
 const preview_1 = require("./preview");
+const child_process_1 = require("child_process");
+const path = require("path");
 function activate(context) {
     let panel;
     const updateWebview = () => {
@@ -41,5 +43,41 @@ function activate(context) {
             });
         }
     }));
+    // 1. Create the Status Bar Button
+    const compileBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    compileBtn.command = 'instant-latex.compilePDF';
+    compileBtn.text = `$(rocket) Compile PDF`;
+    compileBtn.tooltip = 'Run pdflatex to generate PDF';
+    // Show button only if a LaTeX file is active
+    const updateBtnVisibility = () => {
+        var _a;
+        if (((_a = vscode.window.activeTextEditor) === null || _a === void 0 ? void 0 : _a.document.languageId) === 'latex') {
+            compileBtn.show();
+        }
+        else {
+            compileBtn.hide();
+        }
+    };
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateBtnVisibility));
+    updateBtnVisibility();
+    // 2. Register the Compile Command
+    let compileCmd = vscode.commands.registerCommand('instant-latex.compilePDF', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor)
+            return;
+        const filePath = editor.document.fileName;
+        const dir = path.dirname(filePath);
+        vscode.window.showInformationMessage('Compiling PDF...');
+        // Command: pdflatex in nonstop mode (so it doesn't hang on errors)
+        const cmd = `pdflatex -interaction=nonstopmode -output-directory="${dir}" "${filePath}"`;
+        (0, child_process_1.exec)(cmd, (error, stdout, stderr) => {
+            if (error) {
+                vscode.window.showErrorMessage(`Compile Error: ${error.message}`);
+                return;
+            }
+            vscode.window.showInformationMessage('PDF Compiled Successfully!');
+        });
+    });
+    context.subscriptions.push(compileBtn, compileCmd);
 }
 //# sourceMappingURL=extension.js.map

@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { getHtmlContent } from './preview';
+import { exec } from 'child_process';
+import * as path from 'path';
 
 export function activate(context: vscode.ExtensionContext) {
     let panel: vscode.WebviewPanel | undefined;
@@ -53,4 +55,46 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    // 1. Create the Status Bar Button
+    const compileBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    compileBtn.command = 'instant-latex.compilePDF';
+    compileBtn.text = `$(rocket) Compile PDF`;
+    compileBtn.tooltip = 'Run pdflatex to generate PDF';
+
+    // Show button only if a LaTeX file is active
+    const updateBtnVisibility = () => {
+        if (vscode.window.activeTextEditor?.document.languageId === 'latex') {
+            compileBtn.show();
+        } else {
+            compileBtn.hide();
+        }
+    };
+    
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateBtnVisibility));
+    updateBtnVisibility();
+
+    // 2. Register the Compile Command
+    let compileCmd = vscode.commands.registerCommand('instant-latex.compilePDF', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) return;
+
+        const filePath = editor.document.fileName;
+        const dir = path.dirname(filePath);
+
+        vscode.window.showInformationMessage('Compiling PDF...');
+
+        // Command: pdflatex in nonstop mode (so it doesn't hang on errors)
+        const cmd = `pdflatex -interaction=nonstopmode -output-directory="${dir}" "${filePath}"`;
+
+        exec(cmd, (error, stdout, stderr) => {
+            if (error) {
+                vscode.window.showErrorMessage(`Compile Error: ${error.message}`);
+                return;
+            }
+            vscode.window.showInformationMessage('PDF Compiled Successfully!');
+        });
+    });
+
+    context.subscriptions.push(compileBtn, compileCmd);
 }

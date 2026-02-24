@@ -18,6 +18,12 @@
         "title": "LaTeX: Show Visual Preview",
         "category": "LaTeX",
         "icon": "$(layout-centered)"
+      },
+      {
+        "command": "instant-latex.compilePDF",
+        "title": "LaTeX: Compile PDF",
+        "category": "LaTeX",
+        "icon": "$(rocket)"
       }
     ],
     "menus": {
