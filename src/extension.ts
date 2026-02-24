@@ -26,6 +26,13 @@ export function activate(context: vscode.ExtensionContext) {
             if (e.document === vscode.window.activeTextEditor?.document) {
                 updateWebview();
             }
+
+            // Send the current line number to the webview
+            const editor = vscode.window.activeTextEditor;
+            if (editor && panel) {
+                const line = editor.selection.active.line;
+                panel.webview.postMessage({ command: 'scrollToLine', line: line });
+            }
         });
 
         // Clean up when closed
@@ -33,4 +40,17 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     context.subscriptions.push(disposable);
+
+    // Inside the activate function
+    context.subscriptions.push(
+        vscode.window.onDidChangeTextEditorSelection(e => {
+            if (panel && e.textEditor.document.languageId === 'latex') {
+                const line = e.selections[0].active.line + 1; // +1 because VS Code is 0-indexed
+                panel.webview.postMessage({
+                    command: 'scrollToLine',
+                    line: line
+                });
+            }
+        })
+    );
 }
