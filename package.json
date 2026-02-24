@@ -1,17 +1,39 @@
 {
-  "name": "instant-latex",
-  "displayName": "Instant LaTeX Preview",
+  "name": "instant-latex-preview",
+  "displayName": "Instant LaTeX Visual Preview",
+  "description": "A rough, lightning-fast visual preview for LaTeX files.",
   "version": "0.0.1",
   "engines": { "vscode": "^1.80.0" },
-  "activationEvents": [ "onLanguage:latex" ],
+  "categories": [ "Visualization" ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "instant-latex.showPreview",
-        "title": "LaTeX: Show Preview",
+        "title": "LaTeX: Show Visual Preview",
+        "category": "LaTeX",
         "icon": "$(layout-centered)"
       }
-    ]
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "instant-latex.showPreview",
+          "group": "navigation",
+          "when": "resourceLangId == latex"
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "16.x",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
   }
 }
