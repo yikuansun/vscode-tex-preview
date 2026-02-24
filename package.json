@@ -3,8 +3,12 @@
   "displayName": "Instant LaTeX Visual Preview",
   "description": "A rough, lightning-fast visual preview for LaTeX files.",
   "version": "0.0.1",
-  "engines": { "vscode": "^1.80.0" },
-  "categories": [ "Visualization" ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Visualization"
+  ],
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
@@ -27,13 +31,17 @@
     }
   },
   "devDependencies": {
-    "@types/vscode": "^1.80.0",
+    "@types/katex": "^0.16.8",
     "@types/node": "16.x",
+    "@types/vscode": "^1.80.0",
     "typescript": "^5.0.0"
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "katex": "^0.16.33"
   }
 }
