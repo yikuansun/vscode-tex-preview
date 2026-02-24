@@ -1,0 +1,17 @@
+{
+  "name": "instant-latex",
+  "displayName": "Instant LaTeX Preview",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.80.0" },
+  "activationEvents": [ "onLanguage:latex" ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "instant-latex.showPreview",
+        "title": "LaTeX: Show Preview",
+        "icon": "$(layout-centered)"
+      }
+    ]
+  }
+}
