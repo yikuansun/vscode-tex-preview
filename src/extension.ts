@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getHtmlContent } from './preview';
+import { getWebviewHtml, getProcessedContent } from './preview';
 import { exec } from 'child_process';
 import * as path from 'path';
 
@@ -17,10 +17,11 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    const updateWebview = () => {
+    const sendContentUpdate = () => {
         if (panel && lastActiveEditor) {
             const text = lastActiveEditor.document.getText();
-            panel.webview.html = getHtmlContent(text);
+            const html = getProcessedContent(text);
+            panel.webview.postMessage({ command: 'updateContent', html });
         }
     };
 
@@ -32,7 +33,11 @@ export function activate(context: vscode.ExtensionContext) {
             { enableScripts: true }
         );
 
-        updateWebview();
+        // Set the HTML shell once — never replaced
+        panel.webview.html = getWebviewHtml();
+
+        // Send initial content after a brief delay for the webview to initialize
+        setTimeout(() => sendContentUpdate(), 50);
 
         // Handle messages from the webview (e.g., click-to-jump)
         panel.webview.onDidReceiveMessage(message => {
@@ -58,8 +63,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Update when the user types
         vscode.workspace.onDidChangeTextDocument(e => {
-            if (e.document === vscode.window.activeTextEditor?.document) {
-                updateWebview();
+            if (e.document === lastActiveEditor?.document) {
+                sendContentUpdate();
             }
         });
 
@@ -69,7 +74,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(disposable);
 
-    // Inside the activate function
+    // Cursor sync: editor -> preview
     context.subscriptions.push(
         vscode.window.onDidChangeTextEditorSelection(e => {
             if (suppressScrollSync) { return; }
@@ -104,17 +109,16 @@ export function activate(context: vscode.ExtensionContext) {
     // 2. Register the Compile Command
     let compileCmd = vscode.commands.registerCommand('instant-latex.compilePDF', () => {
         const editor = vscode.window.activeTextEditor;
-        if (!editor) return;
+        if (!editor) { return; }
 
         const filePath = editor.document.fileName;
         const dir = path.dirname(filePath);
 
         vscode.window.showInformationMessage('Compiling PDF...');
 
-        // Command: pdflatex in nonstop mode (so it doesn't hang on errors)
         const cmd = `pdflatex -interaction=nonstopmode -output-directory="${dir}" "${filePath}"`;
 
-        exec(cmd, (error, stdout, stderr) => {
+        exec(cmd, (error) => {
             if (error) {
                 vscode.window.showErrorMessage(`Compile Error: ${error.message}`);
                 return;

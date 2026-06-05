@@ -1,8 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getHtmlContent = getHtmlContent;
+exports.getProcessedContent = getProcessedContent;
+exports.getWebviewHtml = getWebviewHtml;
 const katex = require("katex");
-function getHtmlContent(text) {
+/**
+ * Converts LaTeX source text into processed HTML content (just the inner body).
+ * This is sent as a message to the webview for incremental updates.
+ */
+function getProcessedContent(text) {
     // 1. Extract content between \begin{document} and \end{document}
     const bodyMatch = text.match(/\\begin\{document\}([\s\S]*)\\end\{document\}/);
     const rawContent = bodyMatch ? bodyMatch[1] : text;
@@ -10,15 +15,14 @@ function getHtmlContent(text) {
     const contentStartOffset = bodyMatch
         ? text.substring(0, text.indexOf('\\begin{document}') + '\\begin{document}'.length).split('\n').length - 1
         : 0;
-    // 2. Split into lines and annotate each line with its source line number
+    // 2. Split into lines and group into logical blocks (separated by blank lines)
     const lines = rawContent.split('\n');
     const blocks = [];
     let currentBlock = null;
     for (let i = 0; i < lines.length; i++) {
-        const sourceLine = i + 1 + contentStartOffset; // 1-indexed
+        const sourceLine = i + 1 + contentStartOffset;
         const line = lines[i];
         if (line.trim() === '') {
-            // Blank line ends current block
             if (currentBlock) {
                 blocks.push(currentBlock);
                 currentBlock = null;
@@ -34,7 +38,7 @@ function getHtmlContent(text) {
     if (currentBlock) {
         blocks.push(currentBlock);
     }
-    // 4. Process each block into HTML
+    // 3. Process each block into HTML
     const processedBlocks = blocks.map(block => {
         let blockText = block.lines.join('\n');
         const dataLine = block.startLine;
@@ -76,7 +80,13 @@ function getHtmlContent(text) {
         // Otherwise, wrap in a paragraph
         return `<p data-line="${dataLine}">${blockText.replace(/\n/g, ' ')}</p>`;
     });
-    const processed = processedBlocks.filter(b => b.length > 0).join('\n');
+    return processedBlocks.filter(b => b.length > 0).join('\n');
+}
+/**
+ * Returns the full webview HTML shell. This is set once and never replaced.
+ * Content updates are sent via postMessage.
+ */
+function getWebviewHtml() {
     return `
         <!DOCTYPE html>
         <html>
@@ -169,6 +179,18 @@ function getHtmlContent(text) {
                 p { margin-bottom: 1em; text-indent: 1.5em; line-height: 1.5; text-align: justify; }
                 h1+p, h2+p, li p { text-indent: 0; }
                 .math-block { margin: 1em 0; text-align: center; break-inside: avoid; }
+
+                /* Hidden measure container */
+                #measure {
+                    position: absolute;
+                    visibility: hidden;
+                    pointer-events: none;
+                    width: 6.5in;
+                    column-width: 6.5in;
+                    column-fill: auto;
+                    height: 9in;
+                    column-gap: 0;
+                }
             </style>
         </head>
         <body>
@@ -177,42 +199,66 @@ function getHtmlContent(text) {
                 <span id="zoom-level">100%</span>
                 <button id="zoom-in">+</button>
             </div>
-            <div class="content" id="content">
-                ${processed}
-            </div>
+            <div id="pages-container"></div>
+            <div id="measure"></div>
             <script>
                 (function() {
-                    const vscode = acquireVsCodeApi();
-                    const content = document.getElementById('content');
-                    const pageWidth = 8.5 * 96;
-                    const pageHeight = 11 * 96;
-                    const margin = 1 * 96;
-                    const contentHeight = pageHeight - 2 * margin;
-                    const contentWidth = pageWidth - 2 * margin;
+                    const vscodeApi = acquireVsCodeApi();
+                    const pagesContainer = document.getElementById('pages-container');
+                    const measure = document.getElementById('measure');
+                    const pageWidthPx = 8.5 * 96;
+                    const pageHeightPx = 11 * 96;
+                    const marginPx = 1 * 96;
+                    const contentWidth = pageWidthPx - 2 * marginPx;
 
                     let zoom = 1.0;
                     const zoomStep = 0.1;
                     const minZoom = 0.3;
                     const maxZoom = 2.0;
+                    let currentContent = '';
 
                     function applyZoom() {
                         document.querySelectorAll('.page').forEach(page => {
                             page.style.transform = 'scale(' + zoom + ')';
-                            page.style.marginBottom = (-(1 - zoom) * pageHeight + 20) + 'px';
+                            page.style.marginBottom = (-(1 - zoom) * pageHeightPx + 20) + 'px';
                         });
                         document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
                     }
 
-                    // Given a data-line value, find which page index it falls on
-                    // by checking the element's offsetLeft in the original content column layout
-                    function getPageIndexForLine(line) {
-                        // Use the first page's content (page index 0) to measure positions
-                        const firstPage = document.querySelector('.page');
-                        if (!firstPage) return 0;
-                        const firstContent = firstPage.querySelector('.content');
-                        if (!firstContent) return 0;
+                    function rebuildPages() {
+                        // Save scroll position
+                        const scrollY = window.scrollY;
 
-                        const elements = Array.from(firstContent.querySelectorAll('[data-line]'));
+                        // Measure how many columns (pages) are needed
+                        measure.innerHTML = currentContent;
+                        const scrollWidth = measure.scrollWidth;
+                        const numPages = Math.max(1, Math.ceil(scrollWidth / contentWidth));
+
+                        // Only rebuild if page count changed or content changed
+                        pagesContainer.innerHTML = '';
+                        for (let i = 0; i < numPages; i++) {
+                            const page = document.createElement('div');
+                            page.className = 'page';
+                            page.setAttribute('data-page', String(i));
+                            const clip = document.createElement('div');
+                            clip.className = 'page-clip';
+                            const inner = document.createElement('div');
+                            inner.className = 'content';
+                            inner.innerHTML = currentContent;
+                            inner.style.left = (-i * contentWidth) + 'px';
+                            clip.appendChild(inner);
+                            page.appendChild(clip);
+                            pagesContainer.appendChild(page);
+                        }
+
+                        applyZoom();
+
+                        // Restore scroll position
+                        window.scrollTo(0, scrollY);
+                    }
+
+                    function getPageIndexForLine(line) {
+                        const elements = Array.from(measure.querySelectorAll('[data-line]'));
                         let target = null;
                         let closestDist = Infinity;
                         for (const el of elements) {
@@ -226,19 +272,13 @@ function getHtmlContent(text) {
                             }
                         }
                         if (!target) return 0;
-
-                        // The element's offsetLeft relative to the content div tells us which column it's in
-                        const elLeft = target.offsetLeft;
-                        return Math.floor(elLeft / contentWidth);
+                        return Math.floor(target.offsetLeft / contentWidth);
                     }
 
                     function highlightOnPage(pageIndex, line) {
-                        // Clear all highlights
                         document.querySelectorAll('.highlight-sync').forEach(e => e.classList.remove('highlight-sync'));
-
-                        const pages = document.querySelectorAll('.page');
+                        const pages = pagesContainer.querySelectorAll('.page');
                         if (pageIndex >= pages.length) return;
-
                         const pageContent = pages[pageIndex].querySelector('.content');
                         if (!pageContent) return;
 
@@ -261,86 +301,55 @@ function getHtmlContent(text) {
                         }
                     }
 
-                    // Wait for fonts/KaTeX to render
-                    setTimeout(() => {
-                        const scrollWidth = content.scrollWidth;
-                        const numPages = Math.max(1, Math.ceil(scrollWidth / contentWidth));
-
-                        const body = document.body;
-                        const zoomControls = document.getElementById('zoom-controls');
-                        body.innerHTML = '';
-                        body.appendChild(zoomControls);
-
-                        for (let i = 0; i < numPages; i++) {
-                            const page = document.createElement('div');
-                            page.className = 'page';
-                            page.setAttribute('data-page', i);
-                            const clip = document.createElement('div');
-                            clip.className = 'page-clip';
-                            const inner = document.createElement('div');
-                            inner.className = 'content';
-                            inner.innerHTML = content.innerHTML;
-                            inner.style.left = (-i * contentWidth) + 'px';
-                            clip.appendChild(inner);
-                            page.appendChild(clip);
-                            body.appendChild(page);
-                        }
-
+                    // Zoom controls
+                    document.getElementById('zoom-in').addEventListener('click', () => {
+                        zoom = Math.min(maxZoom, zoom + zoomStep);
                         applyZoom();
-
-                        // Zoom controls
-                        document.getElementById('zoom-in').addEventListener('click', () => {
-                            zoom = Math.min(maxZoom, zoom + zoomStep);
+                    });
+                    document.getElementById('zoom-out').addEventListener('click', () => {
+                        zoom = Math.max(minZoom, zoom - zoomStep);
+                        applyZoom();
+                    });
+                    window.addEventListener('wheel', (e) => {
+                        if (e.ctrlKey) {
+                            e.preventDefault();
+                            if (e.deltaY < 0) {
+                                zoom = Math.min(maxZoom, zoom + zoomStep);
+                            } else {
+                                zoom = Math.max(minZoom, zoom - zoomStep);
+                            }
                             applyZoom();
-                        });
-                        document.getElementById('zoom-out').addEventListener('click', () => {
-                            zoom = Math.max(minZoom, zoom - zoomStep);
-                            applyZoom();
-                        });
+                        }
+                    }, { passive: false });
 
-                        // Ctrl+Scroll to zoom
-                        window.addEventListener('wheel', (e) => {
-                            if (e.ctrlKey) {
-                                e.preventDefault();
-                                if (e.deltaY < 0) {
-                                    zoom = Math.min(maxZoom, zoom + zoomStep);
-                                } else {
-                                    zoom = Math.max(minZoom, zoom - zoomStep);
-                                }
-                                applyZoom();
-                            }
-                        }, { passive: false });
+                    // Click in preview -> jump to source line
+                    document.addEventListener('click', (e) => {
+                        const target = e.target.closest('[data-line]');
+                        if (target) {
+                            const line = parseInt(target.getAttribute('data-line'));
+                            vscodeApi.postMessage({ command: 'jumpToLine', line: line });
+                            document.querySelectorAll('.highlight-sync').forEach(el => el.classList.remove('highlight-sync'));
+                            target.classList.add('highlight-sync');
+                            setTimeout(() => target.classList.remove('highlight-sync'), 1500);
+                        }
+                    });
 
-                        // Click in preview -> jump to source line
-                        document.addEventListener('click', (e) => {
-                            const target = e.target.closest('[data-line]');
-                            if (target) {
-                                const line = parseInt(target.getAttribute('data-line'));
-                                vscode.postMessage({ command: 'jumpToLine', line: line });
-                                // Highlight only on the page that was clicked
-                                const page = target.closest('.page');
-                                if (page) {
-                                    document.querySelectorAll('.highlight-sync').forEach(el => el.classList.remove('highlight-sync'));
-                                    target.classList.add('highlight-sync');
-                                    setTimeout(() => target.classList.remove('highlight-sync'), 1500);
-                                }
+                    // Handle messages from extension
+                    window.addEventListener('message', event => {
+                        const message = event.data;
+                        if (message.command === 'updateContent') {
+                            currentContent = message.html;
+                            rebuildPages();
+                        } else if (message.command === 'scrollToLine') {
+                            const line = message.line;
+                            const pageIndex = getPageIndexForLine(line);
+                            const pages = pagesContainer.querySelectorAll('.page');
+                            if (pageIndex < pages.length) {
+                                pages[pageIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                highlightOnPage(pageIndex, line);
                             }
-                        });
-
-                        // Editor cursor -> scroll preview to the correct page
-                        window.addEventListener('message', event => {
-                            const message = event.data;
-                            if (message.command === 'scrollToLine') {
-                                const line = message.line;
-                                const pageIndex = getPageIndexForLine(line);
-                                const pages = document.querySelectorAll('.page');
-                                if (pageIndex < pages.length) {
-                                    pages[pageIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    highlightOnPage(pageIndex, line);
-                                }
-                            }
-                        });
-                    }, 100);
+                        }
+                    });
                 })();
             </script>
         </body>

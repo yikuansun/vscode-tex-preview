@@ -15,15 +15,19 @@ function activate(context) {
             lastActiveEditor = editor;
         }
     }));
-    const updateWebview = () => {
+    const sendContentUpdate = () => {
         if (panel && lastActiveEditor) {
             const text = lastActiveEditor.document.getText();
-            panel.webview.html = (0, preview_1.getHtmlContent)(text);
+            const html = (0, preview_1.getProcessedContent)(text);
+            panel.webview.postMessage({ command: 'updateContent', html });
         }
     };
     let disposable = vscode.commands.registerCommand('instant-latex.showPreview', () => {
         panel = vscode.window.createWebviewPanel('latexPreview', 'LaTeX Visual Preview', vscode.ViewColumn.Beside, { enableScripts: true });
-        updateWebview();
+        // Set the HTML shell once — never replaced
+        panel.webview.html = (0, preview_1.getWebviewHtml)();
+        // Send initial content after a brief delay for the webview to initialize
+        setTimeout(() => sendContentUpdate(), 50);
         // Handle messages from the webview (e.g., click-to-jump)
         panel.webview.onDidReceiveMessage(message => {
             if (message.command === 'jumpToLine') {
@@ -43,16 +47,15 @@ function activate(context) {
         }, undefined, context.subscriptions);
         // Update when the user types
         vscode.workspace.onDidChangeTextDocument(e => {
-            var _a;
-            if (e.document === ((_a = vscode.window.activeTextEditor) === null || _a === void 0 ? void 0 : _a.document)) {
-                updateWebview();
+            if (e.document === (lastActiveEditor === null || lastActiveEditor === void 0 ? void 0 : lastActiveEditor.document)) {
+                sendContentUpdate();
             }
         });
         // Clean up when closed
         panel.onDidDispose(() => { panel = undefined; }, null, context.subscriptions);
     });
     context.subscriptions.push(disposable);
-    // Inside the activate function
+    // Cursor sync: editor -> preview
     context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(e => {
         if (suppressScrollSync) {
             return;
@@ -85,14 +88,14 @@ function activate(context) {
     // 2. Register the Compile Command
     let compileCmd = vscode.commands.registerCommand('instant-latex.compilePDF', () => {
         const editor = vscode.window.activeTextEditor;
-        if (!editor)
+        if (!editor) {
             return;
+        }
         const filePath = editor.document.fileName;
         const dir = path.dirname(filePath);
         vscode.window.showInformationMessage('Compiling PDF...');
-        // Command: pdflatex in nonstop mode (so it doesn't hang on errors)
         const cmd = `pdflatex -interaction=nonstopmode -output-directory="${dir}" "${filePath}"`;
-        (0, child_process_1.exec)(cmd, (error, stdout, stderr) => {
+        (0, child_process_1.exec)(cmd, (error) => {
             if (error) {
                 vscode.window.showErrorMessage(`Compile Error: ${error.message}`);
                 return;
