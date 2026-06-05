@@ -175,9 +175,9 @@ export function getHtmlContent(text: string): string {
                     min-width: 40px;
                     text-align: center;
                 }
-                [data-line] { cursor: pointer; }
-                [data-line]:hover { outline: 2px solid rgba(66, 135, 245, 0.4); outline-offset: 2px; border-radius: 2px; }
-                .highlight-sync { outline: 2px solid rgba(66, 135, 245, 0.8) !important; outline-offset: 2px; border-radius: 2px; transition: outline-color 0.3s; }
+                [data-line] { cursor: pointer; transition: background-color 0.2s; }
+                [data-line]:hover { background-color: rgba(66, 135, 245, 0.08); border-radius: 3px; }
+                .highlight-sync { background-color: rgba(66, 135, 245, 0.15) !important; border-radius: 3px; transition: background-color 0.3s; }
                 
                 /* List Styling */
                 ul, ol { margin-left: 2em; margin-bottom: 1em; }
