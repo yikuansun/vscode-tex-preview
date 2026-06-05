@@ -8,6 +8,9 @@ const katex = require("katex");
  * This is sent as a message to the webview for incremental updates.
  */
 function getProcessedContent(text) {
+    // 0. Strip LaTeX comments: remove everything from unescaped % to end of line
+    // Preserve line count by keeping the newline (so line numbers stay correct)
+    text = text.replace(/(?<!\\)%.*$/gm, '');
     // 1. Extract content between \begin{document} and \end{document}
     const bodyMatch = text.match(/\\begin\{document\}([\s\S]*)\\end\{document\}/);
     const rawContent = bodyMatch ? bodyMatch[1] : text;
