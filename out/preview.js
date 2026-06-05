@@ -13,7 +13,12 @@ function getHtmlContent(text) {
     content = content.replace(/\$([\s\S]*?)\$|\\\(([\s\S]*?)\\\)/g, (match, p1, p2) => {
         return katex.renderToString(p1 || p2, { displayMode: false, throwOnError: false });
     });
-    // 3. Handle Lists (Itemize and Enumerate)
+    // 3. Handle Text Styles
+    content = content
+        .replace(/\\textbf\{([^}]*)\}/g, '<strong>$1</strong>')
+        .replace(/\\textit\{([^}]*)\}/g, '<em>$1</em>')
+        .replace(/\\underline\{([^}]*)\}/g, '<u>$1</u>');
+    // 4. Handle Lists (Itemize and Enumerate)
     // Map \begin{itemize} -> <ul> and \item -> <li>
     content = content
         .replace(/\\begin\{itemize\}/g, '<ul>')
@@ -21,7 +26,7 @@ function getHtmlContent(text) {
         .replace(/\\begin\{enumerate\}/g, '<ol>')
         .replace(/\\end\{enumerate\}/g, '</ol>')
         .replace(/\\item\s+(.*)/g, '<li>$1</li>');
-    // 4. Basic Structure
+    // 5. Basic Structure
     let processed = content
         .replace(/\\section\{(.*?)\}/g, (match, title, offset) => {
         // We calculate a rough line number based on character offset
@@ -32,6 +37,19 @@ function getHtmlContent(text) {
         const line = text.substring(0, offset).split('\n').length;
         return `<h2 id="line-${line}" class="sync-point">${title}</h2>`;
     });
+    // 6. Paragraphs: split on double line breaks (blank lines)
+    processed = processed
+        .split(/\n\s*\n/)
+        .map(block => block.trim())
+        .filter(block => block.length > 0)
+        .map(block => {
+        // Don't wrap blocks that already start with an HTML block-level tag
+        if (/^<(h[1-6]|ul|ol|li|div|table|blockquote)/i.test(block)) {
+            return block;
+        }
+        return `<p>${block.replace(/\n/g, ' ')}</p>`;
+    })
+        .join('\n');
     // Now, add this <script> just before the closing </body> tag:
     const script = `
         <script>
