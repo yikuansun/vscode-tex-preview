@@ -5,10 +5,21 @@ import * as path from 'path';
 
 export function activate(context: vscode.ExtensionContext) {
     let panel: vscode.WebviewPanel | undefined;
+    let lastActiveEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
+    let suppressScrollSync = false;
+
+    // Track the last active text editor (so we can jump back to it from the webview)
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (editor) {
+                lastActiveEditor = editor;
+            }
+        })
+    );
 
     const updateWebview = () => {
-        if (panel && vscode.window.activeTextEditor) {
-            const text = vscode.window.activeTextEditor.document.getText();
+        if (panel && lastActiveEditor) {
+            const text = lastActiveEditor.document.getText();
             panel.webview.html = getHtmlContent(text);
         }
     };
@@ -23,17 +34,32 @@ export function activate(context: vscode.ExtensionContext) {
 
         updateWebview();
 
+        // Handle messages from the webview (e.g., click-to-jump)
+        panel.webview.onDidReceiveMessage(message => {
+            if (message.command === 'jumpToLine') {
+                const editor = lastActiveEditor;
+                if (editor) {
+                    // Suppress the scroll-sync feedback loop
+                    suppressScrollSync = true;
+                    setTimeout(() => { suppressScrollSync = false; }, 300);
+
+                    const line = Math.max(0, message.line - 1); // convert to 0-indexed
+                    const position = new vscode.Position(line, 0);
+                    editor.selection = new vscode.Selection(position, position);
+                    editor.revealRange(
+                        new vscode.Range(position, position),
+                        vscode.TextEditorRevealType.InCenter
+                    );
+                    // Bring the editor into focus
+                    vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
+                }
+            }
+        }, undefined, context.subscriptions);
+
         // Update when the user types
         vscode.workspace.onDidChangeTextDocument(e => {
             if (e.document === vscode.window.activeTextEditor?.document) {
                 updateWebview();
-            }
-
-            // Send the current line number to the webview
-            const editor = vscode.window.activeTextEditor;
-            if (editor && panel) {
-                const line = editor.selection.active.line;
-                panel.webview.postMessage({ command: 'scrollToLine', line: line });
             }
         });
 
@@ -46,6 +72,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Inside the activate function
     context.subscriptions.push(
         vscode.window.onDidChangeTextEditorSelection(e => {
+            if (suppressScrollSync) { return; }
             if (panel && e.textEditor.document.languageId === 'latex') {
                 const line = e.selections[0].active.line + 1; // +1 because VS Code is 0-indexed
                 panel.webview.postMessage({
