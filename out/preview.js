@@ -1,24 +1,70 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getProcessedContent = getProcessedContent;
+exports.getProcessedBlocks = getProcessedBlocks;
 exports.getWebviewHtml = getWebviewHtml;
 const katex = require("katex");
 /**
- * Converts LaTeX source text into processed HTML content (just the inner body).
- * This is sent as a message to the webview for incremental updates.
+ * Strips comments and extracts document body, returning lines with offset info.
  */
-function getProcessedContent(text) {
-    // 0. Strip LaTeX comments: remove everything from unescaped % to end of line
-    // Preserve line count by keeping the newline (so line numbers stay correct)
+function prepareText(text) {
+    // Strip LaTeX comments (preserve line structure)
     text = text.replace(/(?<!\\)%.*$/gm, '');
-    // 1. Extract content between \begin{document} and \end{document}
     const bodyMatch = text.match(/\\begin\{document\}([\s\S]*)\\end\{document\}/);
     const rawContent = bodyMatch ? bodyMatch[1] : text;
-    // Calculate the line offset if we extracted from \begin{document}
     const contentStartOffset = bodyMatch
         ? text.substring(0, text.indexOf('\\begin{document}') + '\\begin{document}'.length).split('\n').length - 1
         : 0;
-    // 2. Split into lines and group into logical blocks (separated by blank lines)
+    return { rawContent, contentStartOffset };
+}
+/**
+ * Processes a single block of lines into HTML.
+ */
+function processBlock(blockLines, dataLine) {
+    let blockText = blockLines.join('\n');
+    // Handle display math
+    blockText = blockText.replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g, (_match, p1, p2) => {
+        return `<div class="math-block" data-line="${dataLine}">${katex.renderToString(p1 || p2, { displayMode: true, throwOnError: false })}</div>`;
+    });
+    // Handle inline math
+    blockText = blockText.replace(/\$([\s\S]*?)\$|\\\(([\s\S]*?)\\\)/g, (_match, p1, p2) => {
+        return katex.renderToString(p1 || p2, { displayMode: false, throwOnError: false });
+    });
+    // Handle text styles
+    blockText = blockText
+        .replace(/\\textbf\{([^}]*)\}/g, '<strong>$1</strong>')
+        .replace(/\\textit\{([^}]*)\}/g, '<em>$1</em>')
+        .replace(/\\underline\{([^}]*)\}/g, '<u>$1</u>');
+    // Handle lists
+    blockText = blockText
+        .replace(/\\begin\{itemize\}/g, '<ul>')
+        .replace(/\\end\{itemize\}/g, '</ul>')
+        .replace(/\\begin\{enumerate\}/g, '<ol>')
+        .replace(/\\end\{enumerate\}/g, '</ol>')
+        .replace(/\\item\s+(.*)/g, `<li data-line="${dataLine}">$1</li>`);
+    // Handle sections
+    blockText = blockText.replace(/\\section\{(.*?)\}/g, (_match, title) => {
+        return `<h1 data-line="${dataLine}">${title}</h1>`;
+    });
+    blockText = blockText.replace(/\\subsection\{(.*?)\}/g, (_match, title) => {
+        return `<h2 data-line="${dataLine}">${title}</h2>`;
+    });
+    // Skip preamble commands
+    if (/^\\(documentclass|usepackage|title|author|date|maketitle|begin|end)/.test(blockText.trim())) {
+        return '';
+    }
+    // If already a block-level tag, return as-is
+    if (/^<(h[1-6]|ul|ol|div|table|blockquote)/i.test(blockText.trim())) {
+        return blockText;
+    }
+    // Otherwise, wrap in a paragraph
+    return `<p data-line="${dataLine}">${blockText.replace(/\n/g, ' ')}</p>`;
+}
+/**
+ * Returns an array of processed blocks with their source line numbers.
+ * Each block's HTML is independently rendered.
+ */
+function getProcessedBlocks(text) {
+    const { rawContent, contentStartOffset } = prepareText(text);
     const lines = rawContent.split('\n');
     const blocks = [];
     let currentBlock = null;
@@ -41,53 +87,15 @@ function getProcessedContent(text) {
     if (currentBlock) {
         blocks.push(currentBlock);
     }
-    // 3. Process each block into HTML
-    const processedBlocks = blocks.map(block => {
-        let blockText = block.lines.join('\n');
-        const dataLine = block.startLine;
-        // Handle display math
-        blockText = blockText.replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g, (_match, p1, p2) => {
-            return `<div class="math-block" data-line="${dataLine}">${katex.renderToString(p1 || p2, { displayMode: true, throwOnError: false })}</div>`;
-        });
-        // Handle inline math
-        blockText = blockText.replace(/\$([\s\S]*?)\$|\\\(([\s\S]*?)\\\)/g, (_match, p1, p2) => {
-            return katex.renderToString(p1 || p2, { displayMode: false, throwOnError: false });
-        });
-        // Handle text styles
-        blockText = blockText
-            .replace(/\\textbf\{([^}]*)\}/g, '<strong>$1</strong>')
-            .replace(/\\textit\{([^}]*)\}/g, '<em>$1</em>')
-            .replace(/\\underline\{([^}]*)\}/g, '<u>$1</u>');
-        // Handle lists
-        blockText = blockText
-            .replace(/\\begin\{itemize\}/g, '<ul>')
-            .replace(/\\end\{itemize\}/g, '</ul>')
-            .replace(/\\begin\{enumerate\}/g, '<ol>')
-            .replace(/\\end\{enumerate\}/g, '</ol>')
-            .replace(/\\item\s+(.*)/g, `<li data-line="${dataLine}">$1</li>`);
-        // Handle sections
-        blockText = blockText.replace(/\\section\{(.*?)\}/g, (_match, title) => {
-            return `<h1 data-line="${dataLine}">${title}</h1>`;
-        });
-        blockText = blockText.replace(/\\subsection\{(.*?)\}/g, (_match, title) => {
-            return `<h2 data-line="${dataLine}">${title}</h2>`;
-        });
-        // Skip preamble commands
-        if (/^\\(documentclass|usepackage|title|author|date|maketitle|begin|end)/.test(blockText.trim())) {
-            return '';
-        }
-        // If the block is already wrapped in a block-level tag, return as-is
-        if (/^<(h[1-6]|ul|ol|div|table|blockquote)/i.test(blockText.trim())) {
-            return blockText;
-        }
-        // Otherwise, wrap in a paragraph
-        return `<p data-line="${dataLine}">${blockText.replace(/\n/g, ' ')}</p>`;
-    });
-    return processedBlocks.filter(b => b.length > 0).join('\n');
+    return blocks
+        .map(block => ({
+        dataLine: block.startLine,
+        html: processBlock(block.lines, block.startLine)
+    }))
+        .filter(b => b.html.length > 0);
 }
 /**
- * Returns the full webview HTML shell. This is set once and never replaced.
- * Content updates are sent via postMessage.
+ * Returns the full webview HTML shell. Set once, never replaced.
  */
 function getWebviewHtml() {
     return `
@@ -218,7 +226,9 @@ function getWebviewHtml() {
                     const zoomStep = 0.1;
                     const minZoom = 0.3;
                     const maxZoom = 2.0;
-                    let currentContent = '';
+
+                    // Block cache: array of { dataLine, html }
+                    let cachedBlocks = [];
 
                     function applyZoom() {
                         document.querySelectorAll('.page').forEach(page => {
@@ -228,16 +238,18 @@ function getWebviewHtml() {
                         document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
                     }
 
-                    function rebuildPages() {
-                        // Save scroll position
-                        const scrollY = window.scrollY;
+                    function getFullHtml() {
+                        return cachedBlocks.map(b => b.html).join('\\n');
+                    }
 
-                        // Measure how many columns (pages) are needed
-                        measure.innerHTML = currentContent;
+                    function rebuildPages() {
+                        const scrollY = window.scrollY;
+                        const fullHtml = getFullHtml();
+
+                        measure.innerHTML = fullHtml;
                         const scrollWidth = measure.scrollWidth;
                         const numPages = Math.max(1, Math.ceil(scrollWidth / contentWidth));
 
-                        // Only rebuild if page count changed or content changed
                         pagesContainer.innerHTML = '';
                         for (let i = 0; i < numPages; i++) {
                             const page = document.createElement('div');
@@ -247,7 +259,7 @@ function getWebviewHtml() {
                             clip.className = 'page-clip';
                             const inner = document.createElement('div');
                             inner.className = 'content';
-                            inner.innerHTML = currentContent;
+                            inner.innerHTML = fullHtml;
                             inner.style.left = (-i * contentWidth) + 'px';
                             clip.appendChild(inner);
                             page.appendChild(clip);
@@ -255,9 +267,66 @@ function getWebviewHtml() {
                         }
 
                         applyZoom();
-
-                        // Restore scroll position
                         window.scrollTo(0, scrollY);
+                    }
+
+                    function applyBlockUpdate(newBlocks) {
+                        // Quick check: if block count or any dataLine changed, full rebuild
+                        let needsFullRebuild = false;
+
+                        if (newBlocks.length !== cachedBlocks.length) {
+                            needsFullRebuild = true;
+                        } else {
+                            for (let i = 0; i < newBlocks.length; i++) {
+                                if (newBlocks[i].dataLine !== cachedBlocks[i].dataLine) {
+                                    needsFullRebuild = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Find which blocks changed content
+                        const changedIndices = [];
+                        if (!needsFullRebuild) {
+                            for (let i = 0; i < newBlocks.length; i++) {
+                                if (newBlocks[i].html !== cachedBlocks[i].html) {
+                                    changedIndices.push(i);
+                                }
+                            }
+                        }
+
+                        cachedBlocks = newBlocks;
+
+                        if (needsFullRebuild || changedIndices.length > 3) {
+                            // Full rebuild for structural changes or many block changes
+                            rebuildPages();
+                        } else if (changedIndices.length > 0) {
+                            // Incremental update: patch only changed blocks in each page's content
+                            const fullHtml = getFullHtml();
+                            measure.innerHTML = fullHtml;
+
+                            // Check if page count changed
+                            const scrollWidth = measure.scrollWidth;
+                            const numPages = Math.max(1, Math.ceil(scrollWidth / contentWidth));
+                            const currentPageCount = pagesContainer.querySelectorAll('.page').length;
+
+                            if (numPages !== currentPageCount) {
+                                rebuildPages();
+                            } else {
+                                // Patch each page's content div
+                                const scrollY = window.scrollY;
+                                const pages = pagesContainer.querySelectorAll('.page');
+                                pages.forEach((page, pageIdx) => {
+                                    const contentDiv = page.querySelector('.content');
+                                    if (contentDiv) {
+                                        contentDiv.innerHTML = fullHtml;
+                                        contentDiv.style.left = (-pageIdx * contentWidth) + 'px';
+                                    }
+                                });
+                                window.scrollTo(0, scrollY);
+                            }
+                        }
+                        // else: nothing changed, do nothing
                     }
 
                     function getPageIndexForLine(line) {
@@ -340,9 +409,8 @@ function getWebviewHtml() {
                     // Handle messages from extension
                     window.addEventListener('message', event => {
                         const message = event.data;
-                        if (message.command === 'updateContent') {
-                            currentContent = message.html;
-                            rebuildPages();
+                        if (message.command === 'updateBlocks') {
+                            applyBlockUpdate(message.blocks);
                         } else if (message.command === 'scrollToLine') {
                             const line = message.line;
                             const pageIndex = getPageIndexForLine(line);

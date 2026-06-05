@@ -9,46 +9,54 @@ function activate(context) {
     let panel;
     let lastActiveEditor = vscode.window.activeTextEditor;
     let suppressScrollSync = false;
-    // Track the last active text editor (so we can jump back to it from the webview)
+    let updateTimer;
+    // Track the last active text editor
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor) {
             lastActiveEditor = editor;
         }
     }));
-    const sendContentUpdate = () => {
+    const sendBlockUpdate = () => {
         if (panel && lastActiveEditor) {
             const text = lastActiveEditor.document.getText();
-            const html = (0, preview_1.getProcessedContent)(text);
-            panel.webview.postMessage({ command: 'updateContent', html });
+            const blocks = (0, preview_1.getProcessedBlocks)(text);
+            panel.webview.postMessage({ command: 'updateBlocks', blocks });
         }
+    };
+    const debouncedUpdate = () => {
+        if (updateTimer) {
+            clearTimeout(updateTimer);
+        }
+        updateTimer = setTimeout(() => {
+            sendBlockUpdate();
+            updateTimer = undefined;
+        }, 100);
     };
     let disposable = vscode.commands.registerCommand('instant-latex.showPreview', () => {
         panel = vscode.window.createWebviewPanel('latexPreview', 'LaTeX Visual Preview', vscode.ViewColumn.Beside, { enableScripts: true });
         // Set the HTML shell once — never replaced
         panel.webview.html = (0, preview_1.getWebviewHtml)();
         // Send initial content after a brief delay for the webview to initialize
-        setTimeout(() => sendContentUpdate(), 50);
+        setTimeout(() => sendBlockUpdate(), 50);
         // Handle messages from the webview (e.g., click-to-jump)
         panel.webview.onDidReceiveMessage(message => {
             if (message.command === 'jumpToLine') {
                 const editor = lastActiveEditor;
                 if (editor) {
-                    // Suppress the scroll-sync feedback loop
                     suppressScrollSync = true;
                     setTimeout(() => { suppressScrollSync = false; }, 300);
-                    const line = Math.max(0, message.line - 1); // convert to 0-indexed
+                    const line = Math.max(0, message.line - 1);
                     const position = new vscode.Position(line, 0);
                     editor.selection = new vscode.Selection(position, position);
                     editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-                    // Bring the editor into focus
                     vscode.window.showTextDocument(editor.document, editor.viewColumn, false);
                 }
             }
         }, undefined, context.subscriptions);
-        // Update when the user types
+        // Update when the user types (debounced)
         vscode.workspace.onDidChangeTextDocument(e => {
             if (e.document === (lastActiveEditor === null || lastActiveEditor === void 0 ? void 0 : lastActiveEditor.document)) {
-                sendContentUpdate();
+                debouncedUpdate();
             }
         });
         // Clean up when closed
@@ -61,19 +69,18 @@ function activate(context) {
             return;
         }
         if (panel && e.textEditor.document.languageId === 'latex') {
-            const line = e.selections[0].active.line + 1; // +1 because VS Code is 0-indexed
+            const line = e.selections[0].active.line + 1;
             panel.webview.postMessage({
                 command: 'scrollToLine',
                 line: line
             });
         }
     }));
-    // 1. Create the Status Bar Button
+    // Status Bar Button
     const compileBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     compileBtn.command = 'instant-latex.compilePDF';
     compileBtn.text = `$(rocket) Compile PDF`;
     compileBtn.tooltip = 'Run pdflatex to generate PDF';
-    // Show button only if a LaTeX file is active
     const updateBtnVisibility = () => {
         var _a;
         if (((_a = vscode.window.activeTextEditor) === null || _a === void 0 ? void 0 : _a.document.languageId) === 'latex') {
@@ -85,7 +92,7 @@ function activate(context) {
     };
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateBtnVisibility));
     updateBtnVisibility();
-    // 2. Register the Compile Command
+    // Compile Command
     let compileCmd = vscode.commands.registerCommand('instant-latex.compilePDF', () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
