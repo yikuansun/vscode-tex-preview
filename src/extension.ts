@@ -47,12 +47,12 @@ export function activate(context: vscode.ExtensionContext) {
         // Set the HTML shell once — never replaced
         panel.webview.html = getWebviewHtml();
 
-        // Send initial content after a brief delay for the webview to initialize
-        setTimeout(() => sendBlockUpdate(), 50);
-
         // Handle messages from the webview (e.g., click-to-jump)
         panel.webview.onDidReceiveMessage(message => {
-            if (message.command === 'jumpToLine') {
+            if (message.command === 'ready') {
+                // Webview is initialized, send initial content
+                sendBlockUpdate();
+            } else if (message.command === 'jumpToLine') {
                 const editor = lastActiveEditor;
                 if (editor) {
                     suppressScrollSync = true;
@@ -69,6 +69,9 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
         }, undefined, context.subscriptions);
+
+        // Send initial content after a brief delay for the webview to initialize
+        setTimeout(() => sendBlockUpdate(), 50);
 
         // Update when the user types (debounced)
         vscode.workspace.onDidChangeTextDocument(e => {

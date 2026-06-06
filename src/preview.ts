@@ -444,6 +444,9 @@ export function getWebviewHtml(): string {
                             }
                         }
                     });
+
+                    // Signal that webview is ready to receive content
+                    vscodeApi.postMessage({ command: 'ready' });
                 })();
             </script>
         </body>

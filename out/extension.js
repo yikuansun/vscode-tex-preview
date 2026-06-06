@@ -36,11 +36,13 @@ function activate(context) {
         panel = vscode.window.createWebviewPanel('latexPreview', 'LaTeX Visual Preview', vscode.ViewColumn.Beside, { enableScripts: true });
         // Set the HTML shell once — never replaced
         panel.webview.html = (0, preview_1.getWebviewHtml)();
-        // Send initial content after a brief delay for the webview to initialize
-        setTimeout(() => sendBlockUpdate(), 50);
         // Handle messages from the webview (e.g., click-to-jump)
         panel.webview.onDidReceiveMessage(message => {
-            if (message.command === 'jumpToLine') {
+            if (message.command === 'ready') {
+                // Webview is initialized, send initial content
+                sendBlockUpdate();
+            }
+            else if (message.command === 'jumpToLine') {
                 const editor = lastActiveEditor;
                 if (editor) {
                     suppressScrollSync = true;
@@ -53,6 +55,8 @@ function activate(context) {
                 }
             }
         }, undefined, context.subscriptions);
+        // Send initial content after a brief delay for the webview to initialize
+        setTimeout(() => sendBlockUpdate(), 50);
         // Update when the user types (debounced)
         vscode.workspace.onDidChangeTextDocument(e => {
             if (e.document === (lastActiveEditor === null || lastActiveEditor === void 0 ? void 0 : lastActiveEditor.document)) {
